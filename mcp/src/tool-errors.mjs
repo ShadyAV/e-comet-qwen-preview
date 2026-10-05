@@ -1,0 +1,201 @@
+import {
+    EXTENSION_UPDATE_URL,
+    OZON_PROMOTION_CAPABILITY,
+    OZON_PROMOTION_MIN_EXTENSION_VERSION,
+    isOzonExecutionInterruptionDetails,
+} from './extension-vocabulary.mjs';
+import { StorageUnavailableError } from './storage-layout.mjs';
+
+const SAFE_CODE = /^[A-Z][A-Z0-9_]{2,63}$/;
+const MAX_SAFE_MESSAGE_LENGTH = 500;
+const SAFE_STAGES = new Set(['arguments', 'handoff', 'extension', 'authorization', 'execution', 'storage', 'images', 'seller', 'local']);
+const BROWSER_JOB_REJECTION_CODES = new Set(['BROWSER_JOB_REJECTED', 'BROWSER_JOB_ACCOUNT_MISMATCH']);
+const BROWSER_JOB_REJECTION_REASONS = new Set(['public_key_not_configured', 'user_not_available', 'invalid_format', 'invalid_algorithm', 'invalid_signature', 'issuer_mismatch', 'audience_mismatch', 'subject_mismatch', 'expired', 'invalid_job', 'token_reuse', 'ecomet_not_authenticated', 'activation_storage_unavailable', 'unknown']);
+const BROWSER_JOB_INVALID_JOB_DIAGNOSTICS = new Set(['job_type', 'jobs_count', 'descriptor_type', 'descriptor_shape', 'date_from', 'date_to_or_range', 'claims_iat_or_jti']);
+const exactKeys = (value, allowed, required) => value && typeof value === 'object' && !Array.isArray(value) &&
+    Object.keys(value).every((key) => allowed.includes(key)) && required.every((key) => Object.hasOwn(value, key));
+
+export const parseBrowserJobRejection = (code, value) => {
+    if (!BROWSER_JOB_REJECTION_CODES.has(code) || !exactKeys(value, ['schemaVersion', 'reason', 'diagnostic'], ['schemaVersion', 'reason']) ||
+        value.schemaVersion !== 1 || !BROWSER_JOB_REJECTION_REASONS.has(value.reason)) return undefined;
+    if (value.diagnostic !== undefined && (value.reason !== 'invalid_job' || !BROWSER_JOB_INVALID_JOB_DIAGNOSTICS.has(value.diagnostic))) return undefined;
+    return Object.freeze({ schemaVersion: 1, reason: value.reason, ...(value.diagnostic === undefined ? {} : { diagnostic: value.diagnostic }) });
+};
+
+export const browserJobRejectionDetails = (error) => error instanceof ToolExecutionError && error.details?.browserJobRejection
+    ? { browserJobRejection: error.details.browserJobRejection } : undefined;
+
+// Причина отказа для сборки расширения, не объявившей возможность Ozon. Терминальный код при этом
+// остаётся OZON_ROUTE_NOT_READY: набор кодов зафиксирован в contracts/local-agent-contract.json,
+// который обязан побайтно совпадать с копией в репозитории расширения, поэтому отдельный код связал
+// бы этот фикс с релизом расширения. Отличие от настоящего «страница отчёта не открыта» несёт
+// именно этот reason вместе с текстом сообщения.
+export const OZON_EXTENSION_OUTDATED_REASON = 'extension_outdated';
+const OZON_EXTENSION_OUTDATED_DETAIL_KEYS = Object.freeze([
+    'reason',
+    'requiredCapability',
+    'requiredExtensionVersion',
+    'updateUrl',
+    'installedExtensionVersion',
+]);
+
+// Версия расширения приходит из hello_ack, а на вторичном процессе — ещё и из peer_status, то есть
+// из-за границы процесса. В текст и в details она попадает только в консервативном виде: произвольная
+// строка вывела бы сообщение за MAX_SAFE_MESSAGE_LENGTH, и весь терминальный ответ выродился бы в
+// нераспознанную ошибку вместо диагноза.
+const SAFE_EXTENSION_VERSION = /^[\w.+-]{1,32}$/;
+export const safeExtensionVersion = (value) => (typeof value === 'string' && SAFE_EXTENSION_VERSION.test(value) ? value : undefined);
+
+const isOzonExtensionOutdatedDetails = (value) =>
+    typeof value === 'object' &&
+    value !== null &&
+    Object.keys(value).every((key) => OZON_EXTENSION_OUTDATED_DETAIL_KEYS.includes(key)) &&
+    value.reason === OZON_EXTENSION_OUTDATED_REASON &&
+    value.requiredCapability === OZON_PROMOTION_CAPABILITY &&
+    value.requiredExtensionVersion === OZON_PROMOTION_MIN_EXTENSION_VERSION &&
+    value.updateUrl === EXTENSION_UPDATE_URL &&
+    (value.installedExtensionVersion === undefined || safeExtensionVersion(value.installedExtensionVersion) !== undefined);
+
+export const OZON_PROMOTION_TERMINAL_CODE_STAGES = Object.freeze({
+    OZON_AUTHORIZATION_REJECTED: 'authorization',
+    OZON_ADMISSION_CAPACITY_EXHAUSTED: 'extension',
+    OZON_ROUTE_NOT_READY: 'route',
+    OZON_CONTEXT_CHANGED: 'context',
+    PREFLIGHT_FAILED: 'preflight',
+    REPORT_AMBIGUOUS: 'preflight',
+    CREATE_REJECTED: 'create',
+    CREATE_SERVICE_UNAVAILABLE: 'create',
+    CREATE_OUTCOME_UNKNOWN: 'create',
+    CREATE_REPORT_AMBIGUOUS: 'create',
+    CREATE_NOT_OBSERVABLE: 'create',
+    POLL_FAILED: 'poll',
+    POLL_EXHAUSTED: 'poll',
+    REPORT_TERMINAL_FAILURE: 'poll',
+    DOWNLOAD_REJECTED: 'download',
+    REUSED_REPORT_FORMAT_UNVERIFIED: 'download',
+    OZON_RATE_LIMITED: 'rate_limit',
+    ARTIFACT_REJECTED: 'artifact',
+    OZON_EXECUTION_INTERRUPTED: 'execution',
+    OPERATION_CANCELLED: 'cancelled',
+    OPERATION_DEADLINE_EXCEEDED: 'deadline',
+});
+
+export class ToolExecutionError extends Error {
+    // Структурированное дополнение к message, которое строит только этот процесс.
+    details = undefined;
+
+    constructor(code, message, stage, retryable = false, options = {}) {
+        super(message, options);
+        this.name = 'ToolExecutionError';
+        this.code = code;
+        this.stage = stage;
+        this.retryable = retryable;
+    }
+}
+
+export const safeExternalToolError = (value, fallbackMessage = 'Browser job authorization failed.') => {
+    const code = typeof value?.code === 'string' && SAFE_CODE.test(value.code) ? value.code : 'BROWSER_JOB_AUTHORIZATION_FAILED';
+    const message =
+        typeof value?.message === 'string' && value.message.length > 0 && value.message.length <= MAX_SAFE_MESSAGE_LENGTH
+            ? value.message
+            : fallbackMessage;
+    const stage = SAFE_STAGES.has(value?.stage) ? value.stage : 'authorization';
+    const error = new ToolExecutionError(code, message, stage, value?.retryable === true);
+    const rejection = parseBrowserJobRejection(code, value?.browserJobRejection);
+    if (rejection) error.details = Object.freeze({ browserJobRejection: rejection });
+    return error;
+};
+
+export const safeOzonPromotionToolError = (value) => {
+    const expectedStage = OZON_PROMOTION_TERMINAL_CODE_STAGES[value?.code];
+    if (
+        expectedStage === undefined ||
+        value?.stage !== expectedStage ||
+        value?.retryable !== false ||
+        typeof value?.message !== 'string' ||
+        value.message.length === 0 ||
+        value.message.length > MAX_SAFE_MESSAGE_LENGTH
+        || (value?.code === 'OZON_EXECUTION_INTERRUPTED' && value.details !== undefined &&
+            !isOzonExecutionInterruptionDetails(value.code, value.details))
+    ) {
+        throw new TypeError('Invalid Ozon promotion terminal error.');
+    }
+    const safe = new ToolExecutionError(value.code, value.message, expectedStage, false);
+    // details переносятся только у ошибки, созданной этим процессом. Отказ расширения и отказ пира
+    // приходят как разобранный из JSON обычный объект и instanceof пройти не могут, поэтому чужая
+    // сторона сокета не в состоянии дописать собственный текст в контекст модели через это поле.
+    if (value instanceof ToolExecutionError && isOzonExtensionOutdatedDetails(value.details)) safe.details = value.details;
+    if (value instanceof ToolExecutionError && value.code === 'OZON_AUTHORIZATION_REJECTED' && value.details?.browserJobRejection) {
+        safe.details = value.details;
+    }
+    if (isOzonExecutionInterruptionDetails(value.code, value.details)) {
+        safe.details = { phase: value.details.phase, createOutcome: value.details.createOutcome };
+    }
+    return safe;
+};
+
+// Расширение объявляет возможности в hello_ack. Сборка, которая не объявила Ozon, не умеет исполнять
+// операцию вообще: подписанное задание она отвергает как неизвестный тип ещё на авторизации, поэтому
+// совет «откройте страницу отчёта» для неё заведомо бесполезен.
+export const ozonExtensionOutdatedError = (installedExtensionVersion) => {
+    const installed = safeExtensionVersion(installedExtensionVersion);
+    const error = new ToolExecutionError(
+        'OZON_ROUTE_NOT_READY',
+        `The connected e-Comet extension${installed === undefined ? '' : ` ${installed}`} does not announce ` +
+            `${OZON_PROMOTION_CAPABILITY} and cannot run the Ozon Seller promotion report. Update the e-Comet extension to ` +
+            `${OZON_PROMOTION_MIN_EXTENSION_VERSION} or newer at ${EXTENSION_UPDATE_URL} and retry. ` +
+            'Opening the Ozon promotion page does not help until the extension is updated.',
+        'route',
+        false
+    );
+    error.details = Object.freeze({
+        reason: OZON_EXTENSION_OUTDATED_REASON,
+        requiredCapability: OZON_PROMOTION_CAPABILITY,
+        requiredExtensionVersion: OZON_PROMOTION_MIN_EXTENSION_VERSION,
+        updateUrl: EXTENSION_UPDATE_URL,
+        ...(installed === undefined ? {} : { installedExtensionVersion: installed }),
+    });
+    return error;
+};
+
+export const ozonRouteUnavailableError = (reason = 'unavailable') =>
+    new ToolExecutionError(
+        'OZON_ROUTE_NOT_READY',
+        (reason === 'disconnected'
+            ? 'The e-Comet extension is not connected to the local bridge. '
+            : reason === 'timeout'
+              ? 'The Ozon report authorization response timed out; this does not establish why the route was unavailable. '
+              : 'The Ozon extension route is unavailable; its cause is not established. ') +
+            `Ensure e-Comet extension ${OZON_PROMOTION_MIN_EXTENSION_VERSION} or newer is enabled in the same browser profile, refresh any authenticated Ozon Seller page under https://seller.ozon.ru/app, then request a new report authorization and retry.`,
+        'route',
+        false
+    );
+
+// Форма ответа фиксирована и на проводе: peer_ozon_promotion_result принимает у toolError ровно
+// ok/code/message/stage/retryable, поэтому лишний ключ отсюда сделал бы кадр невалидным и вторичный
+// процесс ждал бы дедлайна вместо отказа. Диагноз устаревшего расширения добавляет к терминальному
+// ответу сам обработчик инструмента, а не этот сериализатор.
+export const toolFailure = (error, fallback = {}) => {
+    if (error instanceof ToolExecutionError || error instanceof StorageUnavailableError) {
+        return {
+            ok: false,
+            code: error.code,
+            message: error.message,
+            stage: error.stage,
+            retryable: error.retryable,
+        };
+    }
+    // Классификация по подстроке в тексте ошибки удалена: строки менялись, регулярки
+    // тихо переставали матчиться (например, `Extension WebSocket is not connected`
+    // не подходил под /extension is not connected/). Источники теперь бросают
+    // ToolExecutionError с кодом, а сюда попадает только действительно неожиданное.
+    const fallbackMessage =
+        typeof fallback.message === 'string' ? fallback.message : 'The local e-Comet operation failed unexpectedly.';
+    return {
+        ok: false,
+        code: fallback.code || 'UNEXPECTED_LOCAL_ERROR',
+        message: fallbackMessage,
+        stage: fallback.stage || 'local',
+        retryable: fallback.retryable === true,
+    };
+};
