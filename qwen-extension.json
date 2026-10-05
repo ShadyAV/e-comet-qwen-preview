@@ -1,6 +1,6 @@
 {
   "name": "e-comet-qwen-preview",
-  "version": "0.1.0-preview.1",
+  "version": "0.1.0-preview.2",
   "displayName": "e-Comet for Qwen (preview)",
   "description": "Experimental e-Comet integration for Qwen Code on Windows.",
   "mcpServers": {
