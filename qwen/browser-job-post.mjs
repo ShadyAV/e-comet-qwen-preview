@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { processHookEvent } from '../hooks/browser-job-handoff.mjs';
+import { isMainModule } from './entry-point.mjs';
 import { resolveQwenRuntimeEnv } from './runtime-env.mjs';
 import { processQwenFeedbackEvent } from './feedback-handoff.mjs';
 import { MAX_MCP_MESSAGE_BYTES } from '../mcp/src/config.mjs';
@@ -60,4 +59,4 @@ const main = async () => {
     process.exitCode = result.exitCode;
 };
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) await main();
+if (isMainModule(import.meta.url)) await main();

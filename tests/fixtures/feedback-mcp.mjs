@@ -2,8 +2,8 @@
 // the only upload implementation writes an archive under the explicitly supplied fixture directory.
 import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { isAbsolute, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { isAbsolute, join } from 'node:path';
+import { isMainModule } from '../../qwen/entry-point.mjs';
 import { prepareECometFeedback, submitECometFeedback } from '../../mcp/src/feedback-tools.mjs';
 import { registerFeedbackArtifact, loadVerifiedFeedbackArtifact, retireFeedbackArtifact } from '../../mcp/src/feedback-artifact-store.mjs';
 import { loadHookSecret, verifyHookSignature } from '../../mcp/src/hook-signature.mjs';
@@ -43,7 +43,7 @@ export const createFeedbackFixture = ({ env, directory }) => {
     } };
 };
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+if (isMainModule(import.meta.url)) {
     const fixture = createFeedbackFixture({ env: process.env, directory: process.env.QWEN_FEEDBACK_FIXTURE_DIR });
     const remote = process.argv.includes('--remote');
     const catalog = remote ? [{ name: 'report_issue', description: 'Authorize a synthetic feedback archive; never contacts a service.',

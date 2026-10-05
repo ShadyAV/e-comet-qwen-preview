@@ -60,6 +60,24 @@ const call = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: {
 const prepared = await prepareBrowserCall(call);
 assert.equal(prepared.message?.params.arguments.triggerUrl, token);
 assert.equal((await prepareBrowserCall(call)).response.result.isError, true);
+const feedbackHook = extension.hooks.PreToolUse[0].hooks[0];
+const transcriptPath = join(process.cwd(), 'synthetic history not opened.jsonl');
+const feedbackArguments = { kind: 'bug', summary: 'Synthetic package hook check',
+    details: 'Only path attestation is checked; no history is read or feedback sent.', includeTranscript: true };
+const feedbackResult = await new backend.HookRunner().executeHook(feedbackHook, 'PreToolUse', {
+    hook_event_name: 'PreToolUse', session_id: 'native-feedback-session', prompt_id: 'native-feedback-session########1',
+    cwd: process.cwd(), tool_name: 'mcp__e-comet-local__prepare_e_comet_feedback',
+    tool_input: feedbackArguments, transcript_path: transcriptPath,
+});
+assert.equal(feedbackResult.success, true, feedbackResult.stderr || feedbackResult.error?.message);
+assert.equal(feedbackResult.exitCode, 0);
+const feedbackPrepared = await prepareBrowserCall({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: {
+    name: 'prepare_e_comet_feedback', arguments: feedbackArguments,
+    _meta: { 'qwen-code/invocation': { version: 1, sessionId: 'native-feedback-session' } },
+} });
+assert.equal(feedbackPrepared.message?.params.arguments.transcriptPath, transcriptPath);
+assert.equal(typeof feedbackPrepared.message.params.arguments.feedbackClaim, 'string');
+assert.equal(feedbackArguments.transcriptPath, undefined);
 const sourceInstall = spawnSync(process.execPath, [cli, 'extensions', 'install', sourceDirectory, '--consent'], {
     cwd: process.cwd(), env: process.env, encoding: 'utf8', timeout: 30_000,
 });
@@ -68,4 +86,4 @@ assert.equal(sourceInstall.status, 1, 'Qwen must reject the build source instead
 assert.equal((await manager.loadExtensionByName('e-comet-qwen-preview')).config.version, manifest.version);
 console.log(JSON.stringify({ host: `Qwen ${host.version}`, platform: process.platform,
     installedVersion: manifest.version, archiveInstall: true, nativeHookRunner: true, oneUseClaim: true,
-    sourceFallbackRejected: true }));
+    nativeFeedbackHook: true, sourceFallbackRejected: true }));

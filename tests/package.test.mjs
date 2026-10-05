@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -200,6 +200,59 @@ test('the extracted native package initializes and lists real MCP tools', async 
     t.diagnostic(`${process.platform}: initialize and tools/list succeeded (${result.tools.length} tools)`);
 });
 
+test('packaged entry points run through a linked directory and remain inactive when imported', async t => {
+    const { directory, root, manifest } = await packageFor(t);
+    // Both the link and its target belong to this test's temporary directory.
+    // Unlink first, before the registered cleanup removes the temporary tree.
+    const linkedRoot = join(directory, 'linked extension');
+    await symlink(root, linkedRoot, process.platform === 'win32' ? 'junction' : 'dir');
+    const env = isolatedEnv(join(directory, 'state'));
+    try {
+        await t.test('MCP initializes through the linked path', async () => {
+            const result = await startMcp(linkedRoot, manifest, env);
+            assert.ok(result.tools.some(tool => tool.name === 'wb_search_by_query'));
+        });
+        await t.test('browser PostToolUse command consumes stdin through the linked path', async () => {
+            const result = await run(process.execPath, [join(linkedRoot, 'qwen/browser-job-post.mjs')], {
+                env, cwd: directory, input: 'invalid-json',
+            });
+            assert.equal(result.code, 2);
+            assert.match(result.stderr, /^HANDOFF_INVALID_EVENT:/);
+        });
+        await t.test('feedback command consumes stdin through the linked path', async () => {
+            const result = await run(process.execPath, [join(linkedRoot, 'qwen/feedback-handoff.mjs')], {
+                env, cwd: directory, input: 'invalid-json',
+            });
+            assert.equal(result.code, 0, result.stderr);
+            assert.ok(result.stdout.trim(), 'The feedback command must produce a denial for invalid input');
+            assert.equal(JSON.parse(result.stdout).hookSpecificOutput.permissionDecision, 'deny');
+        });
+        await t.test('the runnable feedback fixture initializes through the linked path', async () => {
+            await mkdir(join(root, 'tests/fixtures'), { recursive: true });
+            await cp(join(repository, 'tests/fixtures/feedback-mcp.mjs'), join(root, 'tests/fixtures/feedback-mcp.mjs'));
+            const result = await run(process.execPath, [join(linkedRoot, 'tests/fixtures/feedback-mcp.mjs')], {
+                env: { ...env, QWEN_FEEDBACK_FIXTURE_DIR: join(directory, 'feedback fixture') }, cwd: directory,
+                input: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }) + '\n',
+            });
+            assert.equal(result.code, 0, result.stderr);
+            assert.ok(result.stdout.trim(), 'The fixture must answer initialization');
+            assert.equal(JSON.parse(result.stdout).result.serverInfo.name, 'feedback-fixture');
+        });
+        await t.test('importing linked command modules does not execute their entry points', async () => {
+            const importer = join(directory, 'import-commands.mjs');
+            const imports = ['browser-job-proxy.mjs', 'browser-job-post.mjs', 'feedback-handoff.mjs']
+                .map(name => `await import(${JSON.stringify(pathToFileURL(join(linkedRoot, 'qwen', name)).href)});`).join('\n');
+            await writeFile(importer, `${imports}\nconsole.log('imported');\n`);
+            const result = await run(process.execPath, [importer], { env, cwd: directory, input: 'invalid-json' });
+            assert.equal(result.code, 0, result.stderr);
+            assert.equal(result.stdout.trim(), 'imported');
+            assert.equal(result.stderr, '');
+        });
+    } finally {
+        await unlink(linkedRoot);
+    }
+});
+
 test('startup verification catches an archive missing MCP build metadata', async t => {
     const { directory, root, manifest } = await packageFor(t);
     await rm(join(root, 'mcp/package.json'));
@@ -260,6 +313,7 @@ test('stock Qwen installs the native archive and executes its loaded hook with t
     assert.equal(evidence.archiveInstall, true);
     assert.equal(evidence.nativeHookRunner, true);
     assert.equal(evidence.oneUseClaim, true);
+    assert.equal(evidence.nativeFeedbackHook, true);
     assert.equal(evidence.sourceFallbackRejected, true);
     t.diagnostic(JSON.stringify(evidence));
 });

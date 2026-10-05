@@ -2,7 +2,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { chmod, lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { isMainModule } from './entry-point.mjs';
 import { processHookEvent, prepareInputWithTrustedTranscript } from '../hooks/feedback-handoff.mjs';
 import { FEEDBACK_ARTIFACT_RETENTION_MS, MAX_MCP_MESSAGE_BYTES } from '../mcp/src/config.mjs';
 import { sweepExpired } from '../mcp/src/file-retention.mjs';
@@ -95,7 +95,7 @@ export const prepareQwenFeedbackCall = async (event, options = {}) => {
     } catch { return denied(); }
 };
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+if (isMainModule(import.meta.url)) {
     let result;
     try {
         const chunks = []; let bytes = 0;

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
-import { resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+import { isMainModule } from './entry-point.mjs';
 import { processHookEvent } from '../hooks/browser-job-handoff.mjs';
 import { attachStdioTransport } from '../mcp/src/stdio-transport.mjs';
 import { SIGNED_CONTRACT_TOOL_NAMES } from '../mcp/src/tool-contracts.mjs';
@@ -128,6 +128,6 @@ export const runProxy = ({
     });
 });
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+if (isMainModule(import.meta.url)) {
     process.exitCode = await runProxy();
 }
