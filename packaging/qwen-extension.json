@@ -1,8 +1,8 @@
 {
   "name": "e-comet-qwen-preview",
-  "version": "0.1.0-preview.2",
+  "version": "0.1.0-preview.3",
   "displayName": "e-Comet for Qwen (preview)",
-  "description": "Experimental e-Comet integration for Qwen Code on Windows.",
+  "description": "Experimental e-Comet integration for Qwen Code on Windows, Linux and macOS.",
   "mcpServers": {
     "e-comet": {
       "httpUrl": "https://mcp.e-comet.io/mcp"
@@ -23,7 +23,6 @@
         "hooks": [
           {
             "type": "command",
-            "shell": "powershell",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/qwen/browser-job-post.mjs\"",
             "timeout": 10,
             "statusMessage": "Securing e-Comet browser authorization"

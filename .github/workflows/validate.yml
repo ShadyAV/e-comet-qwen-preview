@@ -1,0 +1,44 @@
+name: Validate release packages
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win32
+          - os: ubuntu-latest
+            platform: linux
+          - os: macos-latest
+            platform: darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the unmodified Qwen backend for acceptance checks
+        run: npm install --prefix .test-host --no-package-lock --ignore-scripts --omit=optional @qwen-code/qwen-code@0.25.0
+      - name: Verify assembled archives and native package runtime
+        env:
+          ECOMET_QWEN_CLI: .test-host/node_modules/@qwen-code/qwen-code/cli-entry.js
+        run: node --test tests/package.test.mjs
+      - name: Build release archives
+        run: python scripts/build_archives.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qwen-package-${{ matrix.platform }}
+          path: dist/${{ matrix.platform }}.e-comet-qwen-preview.zip
+          if-no-files-found: error
