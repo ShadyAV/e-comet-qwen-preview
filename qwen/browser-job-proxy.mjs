@@ -7,8 +7,11 @@ import { processHookEvent } from '../hooks/browser-job-handoff.mjs';
 import { attachStdioTransport } from '../mcp/src/stdio-transport.mjs';
 import { SIGNED_CONTRACT_TOOL_NAMES } from '../mcp/src/tool-contracts.mjs';
 import { resolveQwenRuntimeEnv } from './runtime-env.mjs';
+import { prepareQwenFeedbackCall } from './feedback-handoff.mjs';
 
 const signedTools = new Set(SIGNED_CONTRACT_TOOL_NAMES);
+const feedbackTools = new Set(['prepare_e_comet_feedback', 'submit_e_comet_feedback']);
+for (const name of feedbackTools) signedTools.add(name);
 const isSignedCall = message => message?.method === 'tools/call' && signedTools.has(message.params?.name);
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const validId = id => typeof id === 'string' || (typeof id === 'number' && Number.isFinite(id));
@@ -18,17 +21,21 @@ const refusal = (id, text) => ({ response: { jsonrpc: '2.0', id,
 
 export const prepareBrowserCall = async (message, options = {}) => {
     if (!isSignedCall(message)) return { message };
+    const feedback = feedbackTools.has(message.params.name);
     if (message.jsonrpc !== '2.0' || !validId(message.id)) {
-        return { response: rpcError(null, -32600, 'Signed browser tools require a JSON-RPC request ID.') };
+        return { response: rpcError(null, -32600, `${feedback ? 'Feedback' : 'Signed browser'} tools require a JSON-RPC request ID.`) };
     }
     // Only Qwen's transport-owned root metadata is trusted. The arguments object is
     // model-authored. Hook prompt_id and MCP promptId differ in Qwen 0.25.0.
     const context = message.params._meta?.['qwen-code/invocation'];
     if (!object(context) || context.version !== 1 || typeof context.sessionId !== 'string'
         || !context.sessionId.trim() || Buffer.byteLength(context.sessionId, 'utf8') > 512) {
-        return refusal(message.id, 'HANDOFF_QWEN_CONTEXT_REQUIRED: Qwen did not provide valid native session metadata. Check the Qwen plugin integration; another browser_job cannot repair missing host context.');
+        return refusal(message.id, feedback
+            ? 'FEEDBACK_QWEN_CONTEXT_REQUIRED: Qwen did not provide valid native session metadata. Check the Qwen plugin integration before preparing or authorizing feedback.'
+            : 'HANDOFF_QWEN_CONTEXT_REQUIRED: Qwen did not provide valid native session metadata. Check the Qwen plugin integration; another browser_job cannot repair missing host context.');
     }
-    const result = await processHookEvent({
+    const handler = feedback ? prepareQwenFeedbackCall : processHookEvent;
+    const result = await handler({
         hook_event_name: 'PreToolUse', session_id: context.sessionId,
         tool_name: `mcp__e-comet-local__${message.params.name}`,
         tool_input: message.params.arguments === undefined ? {} : message.params.arguments,
@@ -36,7 +43,8 @@ export const prepareBrowserCall = async (message, options = {}) => {
     const decision = result.stdout ? JSON.parse(result.stdout).hookSpecificOutput : undefined;
     if (result.exitCode !== 0 || decision?.permissionDecision !== 'allow' || !object(decision.updatedInput)) {
         return refusal(message.id, decision?.permissionDecisionReason
-            ?? 'HANDOFF_QWEN_INTEGRATION_ERROR: The local authorization handoff failed. Check the Qwen plugin integration before requesting another browser_job.');
+            ?? (feedback ? 'FEEDBACK_QWEN_INTEGRATION_ERROR: The local feedback handoff failed. Check the Qwen plugin integration before authorizing feedback.'
+                : 'HANDOFF_QWEN_INTEGRATION_ERROR: The local authorization handoff failed. Check the Qwen plugin integration before requesting another browser_job.'));
     }
     return { message: { ...message, params: { ...message.params, arguments: decision.updatedInput } } };
 };

@@ -19,13 +19,26 @@
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": "^mcp__e-comet__browser_job$",
+        "matcher": "^mcp__(?:e-comet__(?:browser_job|report_issue)|e-comet-local__prepare_e_comet_feedback)$",
         "hooks": [
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/qwen/browser-job-post.mjs\"",
             "timeout": 10,
             "statusMessage": "Securing e-Comet browser authorization"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^mcp__e-comet-local__prepare_e_comet_feedback$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/qwen/feedback-handoff.mjs\"",
+            "timeout": 10,
+            "statusMessage": "Preparing e-Comet feedback context"
           }
         ]
       }

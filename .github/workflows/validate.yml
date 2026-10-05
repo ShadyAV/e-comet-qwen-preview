@@ -34,7 +34,7 @@ jobs:
       - name: Verify assembled archives and native package runtime
         env:
           ECOMET_QWEN_CLI: .test-host/node_modules/@qwen-code/qwen-code/cli-entry.js
-        run: node --test tests/package.test.mjs
+        run: node --test tests/*.test.mjs
       - name: Build release archives
         run: python scripts/build_archives.py
       - uses: actions/upload-artifact@v4
