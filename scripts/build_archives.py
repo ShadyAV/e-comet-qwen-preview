@@ -14,7 +14,10 @@ PLATFORMS = ("win32", "linux", "darwin")
 
 def build(output: Path) -> None:
     template = json.loads((ROOT / "packaging/qwen-extension.json").read_text("utf-8"))
-    sources = [ROOT / name for name in ("LICENSE", "README.md", "mcp/package.json", "mcp/DIAGNOSTICS.md")]
+    sources = [ROOT / name for name in ("LICENSE", "mcp/package.json", "mcp/DIAGNOSTICS.md")]
+    sources.extend(ROOT / "skills/e-comet-doctor" / name for name in (
+        "SKILL.md", "references/claude.md", "references/codex.md", "references/qwen.md",
+    ))
     for directory in ("qwen", "hooks", "mcp/src"):
         sources.extend(sorted((ROOT / directory).glob("*.mjs")))
     contents = {}

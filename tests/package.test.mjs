@@ -11,7 +11,7 @@ import test from 'node:test';
 const repository = dirname(dirname(fileURLToPath(import.meta.url)));
 const python = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
 const platforms = ['win32', 'linux', 'darwin'];
-const archiveName = platform => `${platform}.e-comet-qwen-preview.zip`;
+const archiveName = platform => `${platform}.e-comet-skills.zip`;
 
 async function temporary(t) {
     const directory = await mkdtemp(join(tmpdir(), 'e-comet package with spaces '));
@@ -138,8 +138,10 @@ test('release archives are repeatable and differ only by the Windows hook shell'
         assert.ok(files['mcp/DIAGNOSTICS.md'], 'Tool descriptions refer to packaged diagnostics');
         assert.ok(files['qwen/browser-job-post.mjs']);
         assert.ok(files['qwen/browser-job-proxy.mjs']);
+        assert.ok(files['skills/e-comet-doctor/SKILL.md']);
+        assert.ok(files['skills/e-comet-doctor/references/qwen.md']);
         for (const name of Object.keys(files)) {
-            assert.match(name, /^(?:LICENSE|README\.md|qwen-extension\.json|mcp\/(?:package\.json|DIAGNOSTICS\.md|src\/[^/]+\.mjs)|(?:qwen|hooks)\/[^/]+\.mjs)$/,
+            assert.match(name, /^(?:LICENSE|qwen-extension\.json|mcp\/(?:package\.json|DIAGNOSTICS\.md|src\/[^/]+\.mjs)|(?:qwen|hooks)\/[^/]+\.mjs|skills\/e-comet-doctor\/(?:SKILL\.md|references\/(?:claude|codex|qwen)\.md))$/,
                 `Unapproved install-archive file: ${name}`);
         }
         const manifest = JSON.parse(await readFile(join(root, 'qwen-extension.json'), 'utf8'));
@@ -162,7 +164,7 @@ test('every command hook receives its platform shell, including additional lifec
     const directory = await temporary(t);
     const source = join(directory, 'source');
     await mkdir(join(source, 'packaging'), { recursive: true });
-    for (const name of ['LICENSE', 'README.md', 'qwen', 'hooks', 'mcp']) {
+    for (const name of ['LICENSE', 'qwen', 'hooks', 'mcp', 'skills']) {
         await cp(join(repository, name), join(source, name), { recursive: true });
     }
     const manifest = JSON.parse(await readFile(join(repository, 'packaging/qwen-extension.json'), 'utf8'));
@@ -314,6 +316,8 @@ test('stock Qwen installs the native archive and executes its loaded hook with t
     assert.equal(evidence.nativeHookRunner, true);
     assert.equal(evidence.oneUseClaim, true);
     assert.equal(evidence.nativeFeedbackHook, true);
+    assert.equal(evidence.nativeDoctorSkill, true);
+    assert.equal(evidence.nativeDoctorDiagnosis, true);
     assert.equal(evidence.sourceFallbackRejected, true);
     t.diagnostic(JSON.stringify(evidence));
 });

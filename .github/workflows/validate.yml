@@ -40,5 +40,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: qwen-package-${{ matrix.platform }}
-          path: dist/${{ matrix.platform }}.e-comet-qwen-preview.zip
+          path: dist/${{ matrix.platform }}.e-comet-skills.zip
           if-no-files-found: error

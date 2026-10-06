@@ -36,11 +36,19 @@ assert.ok(backend?.HookRunner && backend?.ExtensionManager, 'Cannot find the pin
 const manager = new backend.ExtensionManager({ workspaceDir: process.cwd(), isWorkspaceTrusted: true,
     requestConsent: async () => {}, usageStatisticsEnabled: false });
 await manager.refreshCache();
-const extension = await manager.loadExtensionByName('e-comet-qwen-preview');
+const extension = await manager.loadExtensionByName('e-comet-skills');
 assert.ok(extension, 'Qwen must load the extension it installed from the archive');
+assert.equal(extension.skillsDiscoveryHasErrors, undefined);
+assert.deepEqual(extension.skills.map(skill => skill.name), ['e-comet-doctor']);
 assert.match(extension.path, / /, 'Native installation must exercise paths with spaces');
 const manifest = JSON.parse(await readFile(join(extension.path, 'qwen-extension.json'), 'utf8'));
 assert.equal(extension.config.version, manifest.version);
+const doctor = JSON.parse(execFileSync(process.execPath, [join(extension.path, 'mcp/src/doctor.mjs'), '--json'], {
+    cwd: process.cwd(), env: process.env, encoding: 'utf8', timeout: 10_000,
+}));
+assert.ok(doctor.checks.every(check => check.state === 'passed'), JSON.stringify(doctor.checks));
+assert.ok(doctor.checks.some(check => check.check === 'qwen_manifest'));
+assert.equal(doctor.checks.some(check => check.check === 'codex_manifest'), false);
 const hook = extension.hooks.PostToolUse[0].hooks[0];
 assert.equal(hook.shell, process.platform === 'win32' ? 'powershell' : undefined);
 const token = 'https://example.invalid/browser-job#native-package-check';
@@ -83,7 +91,7 @@ const sourceInstall = spawnSync(process.execPath, [cli, 'extensions', 'install',
 });
 assert.equal(sourceInstall.error, undefined);
 assert.equal(sourceInstall.status, 1, 'Qwen must reject the build source instead of installing an OS-mismatched manifest');
-assert.equal((await manager.loadExtensionByName('e-comet-qwen-preview')).config.version, manifest.version);
+assert.equal((await manager.loadExtensionByName('e-comet-skills')).config.version, manifest.version);
 console.log(JSON.stringify({ host: `Qwen ${host.version}`, platform: process.platform,
     installedVersion: manifest.version, archiveInstall: true, nativeHookRunner: true, oneUseClaim: true,
-    nativeFeedbackHook: true, sourceFallbackRejected: true }));
+    nativeFeedbackHook: true, nativeDoctorSkill: true, nativeDoctorDiagnosis: true, sourceFallbackRejected: true }));
